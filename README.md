@@ -1,4 +1,4 @@
-# StakeTokenERC4626Wrapper ReadMe
+# StakeTokenERC4626Wrapper
 
 ## Overview
 
@@ -112,6 +112,153 @@ To use the `StakeTokenERC4626Wrapper`, create a derived contract and implement t
 
 ---
 
-## Disclaimer
+Here is a comprehensive README for your `StkGhoERC4626Wrapper` contract:
 
-This contract is provided as-is and is intended for demonstration purposes. Proper testing and security audits are essential before deploying in a production environment.
+---
+
+# StkGhoERC4626Wrapper
+
+The `StkGhoERC4626Wrapper` contract extends the functionality of the `StakeTokenERC4626Wrapper` to integrate with `stkGHO`, `AAVE`, and `USDC` tokens, enabling advanced token interactions such as swapping rewards and managing assets.
+
+## Overview
+
+This contract provides a wrapper for `stkGHO` (staked GHO) tokens with additional features:
+
+1. Converts `stkGHO` rewards (AAVE tokens) into `GHO` via intermediate swaps.
+2. Implements the ERC-4626 standard for tokenized vaults, allowing for deposits, withdrawals, and rewards claiming.
+3. Integrates Uniswap v3 for swapping rewards and GSM (GHO Stablecoin Manager) for converting USDC to GHO.
+
+## Key Features
+
+- **Reward Management**: Allows users to claim and convert rewards (AAVE) into GHO tokens.
+- **Swap Integration**: Uses Uniswap v3's `Quoter` and `SwapRouter` for converting AAVE to USDC.
+- **Tokenized Vault**: Implements the ERC-4626 standard for `stkGHO`, enabling tokenized asset management.
+- **GHO Conversion**: Converts USDC obtained from swaps into GHO via the GSM.
+
+---
+
+## Contract Details
+
+### Constants
+
+- **`STK_GHO`**: Address of the stkGHO token.
+- **`AAVE`**: Address of the AAVE token.
+- **`USDC`**: Address of the USDC token.
+- **`AAVE_USDC_UNIV3_FEE`**: Uniswap v3 pool fee for AAVE-USDC swaps (3000 = 0.3%).
+- **`USDC_GSM`**: Address of the GHO Stablecoin Manager.
+- **`QUOTER`**: Address of the Uniswap v3 Quoter for querying swap rates.
+- **`SWAP_ROUTER`**: Address of the Uniswap v3 Swap Router for executing swaps.
+
+---
+
+## Functions
+
+### `maxWithdraw(address owner)`
+
+Calculates the maximum amount of assets a user can withdraw. This includes both the redeemable stkGHO and converted rewards (AAVE → USDC → GHO).
+
+- **Returns**: `maxAssets` - Total assets available for withdrawal.
+
+---
+
+### `previewClaim(uint256 assets)`
+
+Estimates the amount of rewards (AAVE) needed to claim a specific amount of assets (GHO).
+
+- **Returns**: `rewards` - Estimated AAVE rewards.
+
+---
+
+### `withdraw(uint256 assets, address receiver, address owner)`
+
+Withdraws a specified amount of assets (GHO) for the user. Handles reward conversion (AAVE → USDC → GHO) and redeems additional stkGHO if necessary.
+
+- **Parameters**:
+
+  - `assets`: Amount of assets (GHO) to withdraw.
+  - `receiver`: Address to receive the assets.
+  - `owner`: Address of the asset owner.
+
+- **Returns**: `redeemShares` - Number of shares redeemed.
+
+---
+
+### `redeem(uint256 shares, address receiver, address owner)`
+
+Redeems a specified number of shares, converting all rewards and stkGHO into assets (GHO) and transferring them to the receiver.
+
+- **Parameters**:
+
+  - `shares`: Number of shares to redeem.
+  - `receiver`: Address to receive the assets.
+  - `owner`: Address of the share owner.
+
+- **Returns**: `assets` - Amount of assets (GHO) redeemed.
+
+---
+
+## Workflow
+
+### Deposit Workflow
+
+1. Deposit stkGHO into the wrapper.
+2. Receive ERC-4626 compatible shares in return.
+
+### Withdraw Workflow
+
+1. Calculate rewards available for withdrawal.
+2. Convert AAVE → USDC → GHO.
+3. Redeem additional stkGHO if necessary.
+4. Transfer GHO to the receiver.
+
+### Redeem Workflow
+
+1. Claim rewards (AAVE).
+2. Swap rewards to USDC via Uniswap v3.
+3. Convert USDC to GHO via GSM.
+4. Redeem shares and transfer GHO to the receiver.
+
+---
+
+## Dependencies
+
+The contract relies on the following external protocols and interfaces:
+
+- **Uniswap v3**: For AAVE to USDC swaps (`Quoter` and `SwapRouter`).
+- **GHO Stablecoin Manager (GSM)**: For USDC to GHO conversion.
+- **StakeTokenERC4626Wrapper**: Parent contract implementing the core ERC-4626 functionality.
+
+---
+
+## Error Handling
+
+- **"staticcall failed"**: Indicates a failure in querying the Uniswap v3 Quoter.
+- **"Delegatecall failed"**: Indicates a failure in delegating calls to the underlying `STAKE_TOKEN`.
+- **Revert on insufficient balances**: Ensures users cannot withdraw or redeem more than their available balance.
+
+---
+
+## Security Considerations
+
+- **Approval Management**: Ensures proper approvals for Uniswap and GSM interactions.
+- **Reentrancy**: Uses `delegatecall` carefully; review for potential vulnerabilities.
+- **Validation**: Reverts on invalid inputs or insufficient balances.
+
+---
+
+## Deployment
+
+To deploy the contract:
+
+1. Ensure all dependencies are deployed (e.g., Uniswap v3, GSM, stkGHO).
+2. Deploy the `StkGhoERC4626Wrapper` contract, passing `STK_GHO` as the constructor parameter.
+
+---
+
+## Future Enhancements
+
+- Add support for other swap routes or fees.
+- Enhance gas efficiency for reward conversion.
+- Introduce governance controls for contract upgrades or parameter tuning.
+
+---
