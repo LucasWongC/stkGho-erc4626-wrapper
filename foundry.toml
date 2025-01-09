@@ -3,4 +3,8 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
+remappings = [ # do not change these remappings otherwise new create2 addresses will be generated, see https://github.com/foundry-rs/foundry/issues/7826
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+]
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
