@@ -13,7 +13,7 @@ contract StkGhoERC4626WrapperTest is Test {
     address public alice;
     address public bob;
 
-    function setUp() public {
+    function setUp() public virtual {
         vm.createSelectFork("mainnet", 21623283);
         stkGhoWrapper = new StkGhoERC4626Wrapper();
         stkGho = stkGhoWrapper.STK_GHO();
@@ -86,13 +86,79 @@ contract DepositAndMintTest is StkGhoERC4626WrapperTest {
         stkGhoWrapper.deposit(amount, alice);
 
         uint256 totalAssetsBefore = stkGhoWrapper.totalAssets();
-        vm.warp(block.timestamp + 30 * 24 * 60 * 60);
+        vm.warp(block.timestamp + 256 * 24 * 60 * 60);
 
         uint256 totalAssetsAfter = stkGhoWrapper.totalAssets();
 
-        assertGe(totalAssetsAfter, totalAssetsBefore);
-        console.log(totalAssetsAfter);
+        assertGt(totalAssetsAfter, totalAssetsBefore);
+
+        IERC20(gho).approve(address(stkGhoWrapper), amount);
+        stkGhoWrapper.deposit(amount, alice);
+
+        uint256 wStkGhoBalance = stkGhoWrapper.balanceOf(alice);
+        assertLt(wStkGhoBalance, 2 * amount);
 
         vm.stopPrank();
+    }
+
+    function test_mintWithMigrate() public {
+        vm.startPrank(alice);
+
+        IERC20(gho).approve(address(stkGhoWrapper), amount);
+        stkGhoWrapper.mint(amount, alice);
+
+        uint256 totalAssetsBefore = stkGhoWrapper.totalAssets();
+        vm.warp(block.timestamp + 256 * 24 * 60 * 60);
+
+        uint256 totalAssetsAfter = stkGhoWrapper.totalAssets();
+
+        assertGt(totalAssetsAfter, totalAssetsBefore);
+
+        uint256 assets = stkGhoWrapper.previewMint(amount);
+        IERC20(gho).approve(address(stkGhoWrapper), assets);
+        stkGhoWrapper.mint(amount, alice);
+
+        totalAssetsBefore = totalAssetsAfter;
+        totalAssetsAfter = stkGhoWrapper.totalAssets();
+        assertGt(totalAssetsAfter, 2 * amount);
+        assertEq(totalAssetsAfter, totalAssetsBefore + assets);
+
+        vm.stopPrank();
+    }
+}
+
+contract WithdrawAndRedeemTest is StkGhoERC4626WrapperTest {
+    uint256 amount = 100e18;
+
+    function setUp() public override {
+        super.setUp();
+
+        vm.startPrank(alice);
+        IERC20(gho).approve(address(stkGhoWrapper), amount);
+        stkGhoWrapper.deposit(amount, alice);
+        vm.stopPrank();
+    }
+
+    function test_withdrawFrom_stkGhoShares() public {
+        uint256 totalAssetsBefore = stkGhoWrapper.totalAssets();
+        uint256 previewedWithdraw = stkGhoWrapper.previewWithdraw(amount);
+        uint256 ghoBalanceBefore = IERC20(gho).balanceOf(alice);
+
+        vm.startPrank(alice);
+        IERC20(stkGhoWrapper).approve(address(stkGhoWrapper), amount);
+        stkGhoWrapper.withdraw(amount, alice, alice);
+
+        uint256 totalAssetsAfter = stkGhoWrapper.totalAssets();
+        uint256 stkGhoBalance = IERC20(stkGho).balanceOf(
+            address(stkGhoWrapper)
+        );
+        uint256 wStkGhoBalance = stkGhoWrapper.balanceOf(alice);
+        uint256 ghoBalanceAfter = IERC20(gho).balanceOf(alice);
+
+        assertEq(totalAssetsAfter, totalAssetsBefore - amount);
+        assertEq(previewedWithdraw, amount);
+        assertEq(stkGhoBalance, 0);
+        assertEq(wStkGhoBalance, 0);
+        assertEq(ghoBalanceAfter, ghoBalanceBefore + amount);
     }
 }

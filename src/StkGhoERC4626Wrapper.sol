@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {IStakeToken} from "./interfaces/IStakeToken.sol";
 import {IERC4626, IERC20, IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IQuoter} from "./interfaces/IQuoter.sol";
+import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {IGsm} from "./interfaces/IGsm.sol";
 
@@ -21,7 +21,8 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
     IGsm public constant USDC_GSM =
         IGsm(0x0d8eFfC11dF3F229AA1EA0509BC9DFa632A13578);
 
-    address public constant QUOTER = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
+    IUniswapV3StaticQuoter public constant QUOTER =
+        IUniswapV3StaticQuoter(0xc80f61d1bdAbD8f5285117e1558fDDf8C64870FE);
     ISwapRouter public constant SWAP_ROUTER =
         ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
@@ -224,10 +225,13 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
             address(this)
         );
+        if (rewards == 0) {
+            return assets;
+        }
+
         IStakeToken(STK_GHO).claimRewards(address(this), rewards);
 
         IERC20(AAVE).approve(address(SWAP_ROUTER), rewards);
-
         uint256 usdcAmount = SWAP_ROUTER.exactInputSingle(
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: AAVE,
@@ -257,18 +261,15 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
     function _rewardToUnderlyingExactInput(
         uint256 rewards
     ) internal view returns (uint256 underlying) {
-        bytes memory quoterCallData = abi.encodeWithSignature(
-            "quoteExactInputSingle(address,address,uint24,uint256,uint160)",
-            AAVE,
-            USDC,
-            AAVE_USDC_UNIV3_FEE,
-            rewards,
-            0
+        uint256 usdcAmount = QUOTER.quoteExactInputSingle(
+            IUniswapV3StaticQuoter.QuoteExactInputSingleParams({
+                tokenIn: AAVE,
+                tokenOut: USDC,
+                amountIn: rewards,
+                fee: AAVE_USDC_UNIV3_FEE,
+                sqrtPriceLimitX96: 0
+            })
         );
-        (bool success, bytes memory data) = QUOTER.staticcall(quoterCallData);
-
-        require(success, "staticcall failed");
-        uint256 usdcAmount = abi.decode(data, (uint256));
 
         (, underlying, , ) = USDC_GSM.getGhoAmountForSellAsset(usdcAmount);
     }
