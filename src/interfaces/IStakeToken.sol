@@ -1,7 +1,38 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-interface IStakeToken {
+library DistributionTypes {
+    struct AssetConfigInput {
+        uint128 emissionPerSecond;
+        uint256 totalStaked;
+        address underlyingAsset;
+    }
+
+    struct UserStakeInput {
+        address underlyingAsset;
+        uint256 stakedByUser;
+        uint256 totalStaked;
+    }
+}
+
+interface IAaveDistributionManager {
+    function configureAssets(
+        DistributionTypes.AssetConfigInput[] memory assetsConfigInput
+    ) external;
+
+    function assets(
+        address asset
+    )
+        external
+        view
+        returns (
+            uint128 emissionPerSecond,
+            uint128 lastUpdateTimestamp,
+            uint256 index
+        );
+}
+
+interface IStakeToken is IAaveDistributionManager {
     /**
      * @dev Return address of Staked Token
      * @return stakedToken The address of staked token

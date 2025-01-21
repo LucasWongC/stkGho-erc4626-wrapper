@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IStakeToken} from "./interfaces/IStakeToken.sol";
-import {IERC4626, IERC20, IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {IGsm} from "./interfaces/IGsm.sol";
+import {IERC7540Redeem, IERC7575} from "./interfaces/IERC7540.sol";
 
 import "forge-std/Test.sol";
 
-contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
+contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     address public constant STK_GHO =
         0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d;
     address public constant GHO = 0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f;
@@ -38,13 +38,28 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
 
     constructor() ERC20("Wrapped StkGho", "WStkGho") {}
 
-    /* --- IERC4626 --- */
-    /// @inheritdoc IERC4626
+    /* --- IERC7575 --- */
+    /// @inheritdoc IERC7575
     function asset() external pure returns (address) {
         return GHO;
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
+    function share() external view returns (address) {
+        return address(this);
+    }
+
+    /// @inheritdoc IERC7575
+    function convertToShares(uint256 assets) external view returns (uint256) {
+        return _assetToShare(assets);
+    }
+
+    /// @inheritdoc IERC7575
+    function convertToAssets(uint256 shares) external view returns (uint256) {
+        return _shareToAsset(shares);
+    }
+
+    /// @inheritdoc IERC7575
     function totalAssets() public view returns (uint256) {
         uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
             address(this)
@@ -61,29 +76,19 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         return ghoFromReward + ghoFromShare;
     }
 
-    /// @inheritdoc IERC4626
-    function convertToShares(uint256 assets) external view returns (uint256) {
-        return _assetToShare(assets);
-    }
-
-    /// @inheritdoc IERC4626
-    function convertToAssets(uint256 shares) external view returns (uint256) {
-        return _shareToAsset(shares);
-    }
-
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function maxDeposit(
         address // receiver
     ) external pure virtual returns (uint256 maxAssets) {
         return 2 ** 256 - 1;
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function previewDeposit(uint256 assets) external view returns (uint256) {
         return _assetToShare(assets);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function deposit(
         uint256 assets,
         address receiver
@@ -99,19 +104,19 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         _mint(receiver, shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function maxMint(
         address // receiver
     ) external pure virtual returns (uint256) {
         return 2 ** 256 - 1;
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function previewMint(uint256 shares) external view returns (uint256) {
         return _shareToAsset(shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function mint(
         uint256 shares,
         address receiver
@@ -127,7 +132,7 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         _mint(receiver, shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function maxWithdraw(
         address owner
     ) external view virtual returns (uint256 maxAssets) {
@@ -135,14 +140,14 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         maxAssets = _shareToAsset(shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function previewWithdraw(
         uint256 assets
     ) external view returns (uint256 shares) {
         shares = _assetToShare(assets);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function withdraw(
         uint256 assets,
         address receiver,
@@ -163,20 +168,20 @@ contract StkGhoERC4626Wrapper is IERC4626, ERC20 {
         _burn(owner, shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function maxRedeem(address owner) external view returns (uint256) {
         uint256 shares = balanceOf(owner);
         return shares;
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function previewRedeem(
         uint256 shares
     ) external view virtual returns (uint256 assets) {
         assets = _shareToAsset(shares);
     }
 
-    /// @inheritdoc IERC4626
+    /// @inheritdoc IERC7575
     function redeem(
         uint256 shares,
         address receiver,
