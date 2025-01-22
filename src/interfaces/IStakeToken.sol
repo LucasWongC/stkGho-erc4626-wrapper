@@ -216,4 +216,16 @@ interface IStakeToken is IAaveDistributionManager {
         uint256 claimAmount,
         uint256 redeemAmount
     ) external;
+
+    /**
+     * @dev Returns cooldown state
+     */
+    function stakersCooldowns(
+        address user
+    ) external view returns (uint40 timestamp, uint216 amount);
+
+    /**
+     * @dev Returns withdraw window
+     */
+    function UNSTAKE_WINDOW() external view returns (uint256);
 }

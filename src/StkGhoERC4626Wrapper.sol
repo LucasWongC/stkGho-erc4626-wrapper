@@ -1,16 +1,24 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IStakeToken} from "./interfaces/IStakeToken.sol";
 import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {IGsm} from "./interfaces/IGsm.sol";
-import {IERC7540Redeem, IERC7575} from "./interfaces/IERC7540.sol";
+import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
 
+import {EIP712Lib} from "./libraries/EIP712Lib.sol";
+import {SignatureLib} from "./libraries/SignatureLib.sol";
 import "forge-std/Test.sol";
 
-contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
+contract StkGhoERC4626Wrapper is
+    IERC7540Redeem,
+    IERC7575,
+    IAuthorizeOperator,
+    ERC20
+{
     address public constant STK_GHO =
         0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d;
     address public constant GHO = 0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f;
@@ -21,22 +29,79 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     IGsm public constant USDC_GSM =
         IGsm(0x0d8eFfC11dF3F229AA1EA0509BC9DFa632A13578);
 
+    uint8 public constant PRECISION = 18;
+
     IUniswapV3StaticQuoter public constant QUOTER =
         IUniswapV3StaticQuoter(0xc80f61d1bdAbD8f5285117e1558fDDf8C64870FE);
     ISwapRouter public constant SWAP_ROUTER =
         ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
-    modifier withMigrate(uint256 keepAssets) {
+    /// @dev to calculate rewards
+    mapping(address user => uint256 index) public userIndex;
+    mapping(address user => uint256 rewards) public stackedRewards;
+
+    /// @inheritdoc IERC7540Operator
+    mapping(address => mapping(address => bool)) public isOperator;
+
+    uint256 public constant DEFAULT_REQUEST_ID = 0;
+
+    bytes32 private immutable nameHash;
+    bytes32 private immutable versionHash;
+    /// @inheritdoc IAuthorizeOperator
+    bytes32 public immutable DOMAIN_SEPARATOR;
+    bytes32 public constant AUTHORIZE_OPERATOR_TYPEHASH =
+        keccak256(
+            "AuthorizeOperator(address controller,address operator,bool approved,bytes32 nonce,uint256 deadline)"
+        );
+    mapping(address controller => mapping(bytes32 nonce => bool used))
+        public authorizations;
+
+    error InvalidOperator();
+    error InvalidController();
+    error AlreadyClaimed();
+    error TimeExpired();
+    error InvalidNonce();
+    error InvalidSignature();
+
+    modifier withClaim() {
         uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
             address(this)
         );
         if (rewards > 0) {
-            _migrateRewards(keepAssets);
+            _claimRewards(rewards);
         }
         _;
     }
 
-    constructor() ERC20("Wrapped StkGho", "WStkGho") {}
+    /// @dev trigger cooldown
+    modifier withCooldown() {
+        (, bool triggerenable) = _checkRedeemable();
+        if (triggerenable) {
+            IStakeToken(STK_GHO).cooldown();
+        }
+
+        _;
+    }
+
+    constructor() ERC20("Wrapped StkGho", "WStkGho") {
+        nameHash = keccak256(bytes("Wrapped StkGHO"));
+        versionHash = keccak256(bytes("1"));
+        DOMAIN_SEPARATOR = EIP712Lib.calculateDomainSeparator(
+            nameHash,
+            versionHash
+        );
+    }
+
+    function supportsInterface(
+        bytes4 interfaceId
+    ) external pure override returns (bool) {
+        return
+            interfaceId == type(IERC7540Redeem).interfaceId ||
+            interfaceId == type(IERC7540Operator).interfaceId ||
+            interfaceId == type(IERC7575).interfaceId ||
+            interfaceId == type(IERC20).interfaceId ||
+            interfaceId == type(IERC165).interfaceId;
+    }
 
     /* --- IERC7575 --- */
     /// @inheritdoc IERC7575
@@ -61,19 +126,9 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
 
     /// @inheritdoc IERC7575
     function totalAssets() public view returns (uint256) {
-        uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
-            address(this)
-        );
         uint256 shares = IERC20(STK_GHO).balanceOf(address(this));
 
-        uint256 ghoFromReward = rewards == 0
-            ? 0
-            : _rewardToUnderlyingExactInput(rewards);
-        uint256 ghoFromShare = shares == 0
-            ? 0
-            : IStakeToken(STK_GHO).previewRedeem(shares);
-
-        return ghoFromReward + ghoFromShare;
+        return IStakeToken(STK_GHO).previewRedeem(shares);
     }
 
     /// @inheritdoc IERC7575
@@ -92,16 +147,9 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     function deposit(
         uint256 assets,
         address receiver
-    ) external withMigrate(type(uint256).max) returns (uint256 shares) {
+    ) external returns (uint256 shares) {
         shares = _assetToShare(assets);
-
-        IERC20(GHO).transferFrom(msg.sender, address(this), assets);
-
-        uint256 stakeAmount = IERC20(GHO).balanceOf(address(this));
-        IERC20(GHO).approve(STK_GHO, stakeAmount);
-        IStakeToken(STK_GHO).stake(address(this), stakeAmount);
-
-        _mint(receiver, shares);
+        _deposit(assets, shares, receiver);
     }
 
     /// @inheritdoc IERC7575
@@ -120,16 +168,9 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     function mint(
         uint256 shares,
         address receiver
-    ) external withMigrate(type(uint256).max) returns (uint256 assets) {
+    ) external returns (uint256 assets) {
         assets = _shareToAsset(shares);
-
-        IERC20(GHO).transferFrom(msg.sender, address(this), assets);
-
-        uint256 stakeAmount = IERC20(GHO).balanceOf(address(this));
-        IERC20(GHO).approve(STK_GHO, stakeAmount);
-        IStakeToken(STK_GHO).stake(address(this), stakeAmount);
-
-        _mint(receiver, shares);
+        _deposit(assets, shares, receiver);
     }
 
     /// @inheritdoc IERC7575
@@ -141,10 +182,8 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     }
 
     /// @inheritdoc IERC7575
-    function previewWithdraw(
-        uint256 assets
-    ) external view returns (uint256 shares) {
-        shares = _assetToShare(assets);
+    function previewWithdraw(uint256) external view returns (uint256) {
+        revert();
     }
 
     /// @inheritdoc IERC7575
@@ -152,21 +191,7 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
         uint256 assets,
         address receiver,
         address owner
-    ) external virtual returns (uint256 shares) {
-        uint256 swappedAsset = _migrateRewards(assets);
-        shares = _assetToShare(assets);
-
-        if (swappedAsset < assets) {
-            uint256 stkGhoRedeemAmount = IStakeToken(STK_GHO).previewStake(
-                assets - swappedAsset
-            );
-            IERC20(STK_GHO).approve(STK_GHO, stkGhoRedeemAmount);
-            IStakeToken(STK_GHO).redeem(address(this), stkGhoRedeemAmount);
-        }
-        IERC20(GHO).transfer(receiver, assets);
-
-        _burn(owner, shares);
-    }
+    ) external virtual returns (uint256) {}
 
     /// @inheritdoc IERC7575
     function maxRedeem(address owner) external view returns (uint256) {
@@ -175,10 +200,8 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
     }
 
     /// @inheritdoc IERC7575
-    function previewRedeem(
-        uint256 shares
-    ) external view virtual returns (uint256 assets) {
-        assets = _shareToAsset(shares);
+    function previewRedeem(uint256) external view virtual returns (uint256) {
+        revert();
     }
 
     /// @inheritdoc IERC7575
@@ -186,20 +209,112 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
         uint256 shares,
         address receiver,
         address owner
-    ) external virtual returns (uint256 assets) {
-        assets = _shareToAsset(shares);
-        uint256 swappedAsset = _migrateRewards(assets);
+    ) external virtual returns (uint256) {}
 
-        if (swappedAsset < assets) {
-            uint256 stkGhoRedeemAmount = IStakeToken(STK_GHO).previewStake(
-                assets - swappedAsset
-            );
-            IERC20(STK_GHO).approve(STK_GHO, stkGhoRedeemAmount);
-            IStakeToken(STK_GHO).redeem(address(this), stkGhoRedeemAmount);
+    /// @inheritdoc IERC7540Operator
+    function setOperator(
+        address operator,
+        bool approved
+    ) public virtual returns (bool success) {
+        if (msg.sender == operator) {
+            revert InvalidOperator();
         }
-        IERC20(GHO).transfer(receiver, assets);
 
-        _burn(owner, shares);
+        isOperator[msg.sender][operator] = approved;
+        emit OperatorSet(msg.sender, operator, approved);
+        success = true;
+    }
+
+    /// @inheritdoc IAuthorizeOperator
+    function authorizeOperator(
+        address controller,
+        address operator,
+        bool approved,
+        bytes32 nonce,
+        uint256 deadline,
+        bytes memory signature
+    ) external returns (bool success) {
+        if (controller == operator) {
+            revert InvalidOperator();
+        }
+        if (block.timestamp > deadline) {
+            revert TimeExpired();
+        }
+        if (authorizations[controller][nonce]) {
+            revert InvalidNonce();
+        }
+
+        authorizations[controller][nonce] = true;
+
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR,
+                keccak256(
+                    abi.encode(
+                        AUTHORIZE_OPERATOR_TYPEHASH,
+                        controller,
+                        operator,
+                        approved,
+                        nonce,
+                        deadline
+                    )
+                )
+            )
+        );
+
+        if (!SignatureLib.isValidSignature(controller, digest, signature)) {
+            revert InvalidSignature();
+        }
+
+        isOperator[controller][operator] = approved;
+        emit OperatorSet(controller, operator, approved);
+
+        success = true;
+    }
+
+    function invalidateNonce(bytes32 nonce) external {
+        authorizations[msg.sender][nonce] = true;
+    }
+
+    /// @inheritdoc IERC7540Redeem
+    function requestRedeem(
+        uint256 shares,
+        address controller,
+        address owner
+    ) external withCooldown returns (uint256 requestId) {
+        address sender = isOperator[owner][msg.sender] ? owner : msg.sender;
+        requestId = DEFAULT_REQUEST_ID;
+
+        uint256 assets = _shareToAsset(shares);
+
+        emit RedeemRequest(controller, owner, requestId, sender, assets);
+    }
+
+    /// @inheritdoc IERC7540Redeem
+    function pendingRedeemRequest(
+        uint256 requestId,
+        address controller
+    ) external view returns (uint256) {
+        (bool redeemable, bool triggerenable) = _checkRedeemable();
+        if (redeemable || triggerenable) {
+            return 0;
+        } else {
+            return balanceOf(controller);
+        }
+    }
+
+    /// @inheritdoc IERC7540Redeem
+    function claimableRedeemRequest(
+        uint256 requestId,
+        address controller
+    ) external view returns (uint256) {
+        (bool redeemable, ) = _checkRedeemable();
+        if (redeemable) {
+            return balanceOf(controller);
+        }
+
+        return 0;
     }
 
     function _assetToShare(
@@ -224,43 +339,8 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
         }
     }
 
-    function _migrateRewards(
-        uint256 keepAssets
-    ) internal returns (uint256 assets) {
-        uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
-            address(this)
-        );
-        if (rewards == 0) {
-            return assets;
-        }
-
+    function _claimRewards(uint256 rewards) internal {
         IStakeToken(STK_GHO).claimRewards(address(this), rewards);
-
-        IERC20(AAVE).approve(address(SWAP_ROUTER), rewards);
-        uint256 usdcAmount = SWAP_ROUTER.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: AAVE,
-                tokenOut: USDC,
-                fee: AAVE_USDC_UNIV3_FEE,
-                recipient: address(this),
-                deadline: block.timestamp + 100,
-                amountIn: rewards,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            })
-        );
-
-        IERC20(USDC).approve(address(USDC_GSM), usdcAmount);
-        (, assets) = USDC_GSM.sellAsset(usdcAmount, address(this));
-
-        uint256 stakeAmounts = keepAssets < assets
-            ? assets - keepAssets
-            : assets;
-
-        if (stakeAmounts > 0) {
-            IERC20(GHO).approve(STK_GHO, assets);
-            IStakeToken(STK_GHO).stake(address(this), assets);
-        }
     }
 
     function _rewardToUnderlyingExactInput(
@@ -277,5 +357,79 @@ contract StkGhoERC4626Wrapper is IERC7540Redeem, ERC20 {
         );
 
         (, underlying, , ) = USDC_GSM.getGhoAmountForSellAsset(usdcAmount);
+    }
+
+    /**
+     * @dev Internal function for the calculation of user's rewards on a distribution
+     * @param principalUserBalance Amount staked by the user on a distribution
+     * @param newIndex Current index of the distribution
+     * @param prevIndex Index stored for the user, representation his staking moment
+     * @return The rewards
+     */
+    function _getRewards(
+        uint256 principalUserBalance,
+        uint256 newIndex,
+        uint256 prevIndex
+    ) internal pure returns (uint256) {
+        return
+            (principalUserBalance * (newIndex - prevIndex)) /
+            (10 ** uint256(PRECISION));
+    }
+
+    function _updateUserIndex(address receiver) internal {
+        (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
+        uint256 userBalance = _shareToAsset(balanceOf(receiver));
+        if (userIndex[receiver] > 0 && userBalance > 0) {
+            uint256 userRewards = _getRewards(
+                userBalance,
+                newIndex,
+                userIndex[receiver]
+            );
+            userIndex[receiver] = newIndex;
+            stackedRewards[receiver] += userRewards;
+        }
+    }
+
+    function _deposit(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal withClaim {
+        IERC20(GHO).transferFrom(msg.sender, address(this), assets);
+
+        IStakeToken(STK_GHO).stake(address(this), assets);
+        _updateUserIndex(receiver);
+
+        _mint(receiver, shares);
+
+        emit Deposit(msg.sender, receiver, assets, shares);
+    }
+
+    function _checkRedeemable()
+        internal
+        view
+        returns (bool redeemable, bool triggerenable)
+    {
+        (uint40 timestamp, ) = IStakeToken(STK_GHO).stakersCooldowns(
+            address(this)
+        );
+        uint256 cooldownSeconds = IStakeToken(STK_GHO).getCooldownSeconds();
+        uint256 unstakeWindow = IStakeToken(STK_GHO).UNSTAKE_WINDOW();
+
+        triggerenable =
+            timestamp + cooldownSeconds + unstakeWindow < block.timestamp;
+        redeemable =
+            timestamp + cooldownSeconds + unstakeWindow >= block.timestamp &&
+            timestamp + cooldownSeconds <= block.timestamp;
+    }
+
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal override {
+        _updateUserIndex(from);
+        _updateUserIndex(to);
+        super._update(from, to, value);
     }
 }
