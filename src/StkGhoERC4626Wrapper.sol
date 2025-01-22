@@ -57,11 +57,10 @@ contract StkGhoERC4626Wrapper is
         public authorizations;
 
     error InvalidOperator();
-    error InvalidController();
-    error AlreadyClaimed();
     error TimeExpired();
     error InvalidNonce();
     error InvalidSignature();
+    error RedeemDisabled();
 
     modifier withClaim() {
         uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
@@ -191,7 +190,10 @@ contract StkGhoERC4626Wrapper is
         uint256 assets,
         address receiver,
         address owner
-    ) external virtual returns (uint256) {}
+    ) external virtual returns (uint256 shares) {
+        shares = _assetToShare(assets);
+        _redeem(assets, shares, receiver, owner);
+    }
 
     /// @inheritdoc IERC7575
     function maxRedeem(address owner) external view returns (uint256) {
@@ -209,7 +211,10 @@ contract StkGhoERC4626Wrapper is
         uint256 shares,
         address receiver,
         address owner
-    ) external virtual returns (uint256) {}
+    ) external virtual returns (uint256) {
+        uint256 assets = _shareToAsset(shares);
+        _redeem(assets, shares, receiver, owner);
+    }
 
     /// @inheritdoc IERC7540Operator
     function setOperator(
@@ -293,7 +298,7 @@ contract StkGhoERC4626Wrapper is
 
     /// @inheritdoc IERC7540Redeem
     function pendingRedeemRequest(
-        uint256 requestId,
+        uint256, // requestId
         address controller
     ) external view returns (uint256) {
         (bool redeemable, bool triggerenable) = _checkRedeemable();
@@ -306,7 +311,7 @@ contract StkGhoERC4626Wrapper is
 
     /// @inheritdoc IERC7540Redeem
     function claimableRedeemRequest(
-        uint256 requestId,
+        uint256, // requestId
         address controller
     ) external view returns (uint256) {
         (bool redeemable, ) = _checkRedeemable();
@@ -315,6 +320,23 @@ contract StkGhoERC4626Wrapper is
         }
 
         return 0;
+    }
+
+    function getRewards(address owner) external view returns (uint256) {
+        uint256 assets = _shareToAsset(balanceOf(owner));
+        (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
+        return
+            stackedRewards[owner] +
+            _getRewards(assets, newIndex, userIndex[owner]);
+    }
+
+    function claimRewards(
+        address owner
+    ) external withClaim returns (uint256 rewards) {
+        rewards = stackedRewards[owner];
+        stackedRewards[owner] = 0;
+
+        IERC20(AAVE).transfer(owner, rewards);
     }
 
     function _assetToShare(
@@ -394,7 +416,7 @@ contract StkGhoERC4626Wrapper is
         uint256 assets,
         uint256 shares,
         address receiver
-    ) internal withClaim {
+    ) internal {
         IERC20(GHO).transferFrom(msg.sender, address(this), assets);
 
         IStakeToken(STK_GHO).stake(address(this), assets);
@@ -403,6 +425,24 @@ contract StkGhoERC4626Wrapper is
         _mint(receiver, shares);
 
         emit Deposit(msg.sender, receiver, assets, shares);
+    }
+
+    function _redeem(
+        uint256 assets,
+        uint256 shares,
+        address receiver,
+        address owner
+    ) internal {
+        (bool redeemable, ) = _checkRedeemable();
+        if (!redeemable) {
+            revert RedeemDisabled();
+        }
+        uint256 stkGhoAmount = IStakeToken(STK_GHO).previewStake(assets);
+        IStakeToken(STK_GHO).redeem(address(this), stkGhoAmount);
+
+        _burn(owner, shares);
+
+        IERC20(GHO).transfer(receiver, assets);
     }
 
     function _checkRedeemable()
