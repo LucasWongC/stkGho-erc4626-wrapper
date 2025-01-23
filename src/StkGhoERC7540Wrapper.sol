@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {IERC165} from "@openzeppelin/contracts/interfaces/IERC165.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IStakeToken} from "./interfaces/IStakeToken.sol";
-import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
-import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
-import {IGsm} from "./interfaces/IGsm.sol";
-import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator, IERC165} from "./interfaces/IERC7540.sol";
+import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
+import {IStkGhoERC7540Wrapper} from "./IStkGhoERC7540Wrapper.sol";
 
 import {EIP712Lib} from "./libraries/EIP712Lib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
@@ -15,28 +13,13 @@ import {SignatureLib} from "./libraries/SignatureLib.sol";
 /// @title StkGhoERC7540Wrapper
 /// @notice A wrapper contract for staked GHO tokens implementing ERC7540 and additional interfaces
 /// @dev This contract wraps staked GHO tokens and provides additional functionality like rewards claiming and operator authorization
-contract StkGhoERC7540Wrapper is
-    IERC7540Redeem,
-    IERC7575,
-    IAuthorizeOperator,
-    ERC20
-{
+contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
     address public constant STK_GHO =
         0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d;
     address public constant GHO = 0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f;
-
     address public constant AAVE = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
-    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    uint24 public constant AAVE_USDC_UNIV3_FEE = 3000;
-    IGsm public constant USDC_GSM =
-        IGsm(0x0d8eFfC11dF3F229AA1EA0509BC9DFa632A13578);
 
     uint8 public constant PRECISION = 18;
-
-    IUniswapV3StaticQuoter public constant QUOTER =
-        IUniswapV3StaticQuoter(0xc80f61d1bdAbD8f5285117e1558fDDf8C64870FE);
-    ISwapRouter public constant SWAP_ROUTER =
-        ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
     /// @dev to calculate rewards
     mapping(address user => uint256 index) public userIndex;
@@ -57,12 +40,6 @@ contract StkGhoERC7540Wrapper is
         );
     mapping(address controller => mapping(bytes32 nonce => bool used))
         public authorizations;
-
-    error InvalidOperator();
-    error TimeExpired();
-    error InvalidNonce();
-    error InvalidSignature();
-    error RedeemDisabled();
 
     /// @dev claim rewards
     modifier withClaim() {
@@ -96,10 +73,9 @@ contract StkGhoERC7540Wrapper is
         );
     }
 
-    /// @inheritdoc IERC165
     function supportsInterface(
         bytes4 interfaceId
-    ) external pure override returns (bool) {
+    ) external view returns (bool) {
         return
             interfaceId == type(IERC7540Redeem).interfaceId ||
             interfaceId == type(IERC7540Operator).interfaceId ||
@@ -284,7 +260,7 @@ contract StkGhoERC7540Wrapper is
         success = true;
     }
 
-    /// @dev Invalidate nonce
+    /// @inheritdoc IStkGhoERC7540Wrapper
     function invalidateNonce(bytes32 nonce) external {
         authorizations[msg.sender][nonce] = true;
     }
@@ -329,9 +305,7 @@ contract StkGhoERC7540Wrapper is
         return 0;
     }
 
-    /// @notice Get the total rewards for a given owner
-    /// @param owner The address of the owner to check rewards for
-    /// @return The total amount of rewards available for the owner
+    /// @inheritdoc IStkGhoERC7540Wrapper
     function getRewards(address owner) external view returns (uint256) {
         uint256 assets = _shareToAsset(balanceOf(owner));
         (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
@@ -340,9 +314,7 @@ contract StkGhoERC7540Wrapper is
             _getRewards(assets, newIndex, userIndex[owner]);
     }
 
-    /// @notice Claim rewards for a given owner
-    /// @param owner The address of the owner claiming rewards
-    /// @return rewards The amount of rewards claimed
+    /// @inheritdoc IStkGhoERC7540Wrapper
     function claimRewards(
         address owner
     ) external withClaim returns (uint256 rewards) {
@@ -431,6 +403,7 @@ contract StkGhoERC7540Wrapper is
     ) internal {
         IERC20(GHO).transferFrom(msg.sender, address(this), assets);
 
+        IERC20(GHO).approve(STK_GHO, assets);
         IStakeToken(STK_GHO).stake(address(this), assets);
         _updateUserIndex(receiver);
 
@@ -459,6 +432,8 @@ contract StkGhoERC7540Wrapper is
         _burn(owner, shares);
 
         IERC20(GHO).transfer(receiver, assets);
+
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
     }
 
     /// @notice Internal function to check if redeem is possible
