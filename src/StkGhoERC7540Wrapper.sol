@@ -7,13 +7,15 @@ import {IStakeToken} from "./interfaces/IStakeToken.sol";
 import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
 import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
 import {IGsm} from "./interfaces/IGsm.sol";
-import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
+import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator, IERC165} from "./interfaces/IERC7540.sol";
 
 import {EIP712Lib} from "./libraries/EIP712Lib.sol";
 import {SignatureLib} from "./libraries/SignatureLib.sol";
-import "forge-std/Test.sol";
 
-contract StkGhoERC4626Wrapper is
+/// @title StkGhoERC7540Wrapper
+/// @notice A wrapper contract for staked GHO tokens implementing ERC7540 and additional interfaces
+/// @dev This contract wraps staked GHO tokens and provides additional functionality like rewards claiming and operator authorization
+contract StkGhoERC7540Wrapper is
     IERC7540Redeem,
     IERC7575,
     IAuthorizeOperator,
@@ -62,6 +64,7 @@ contract StkGhoERC4626Wrapper is
     error InvalidSignature();
     error RedeemDisabled();
 
+    /// @dev claim rewards
     modifier withClaim() {
         uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
             address(this)
@@ -82,6 +85,8 @@ contract StkGhoERC4626Wrapper is
         _;
     }
 
+    /// @notice Constructor function
+    /// @dev Initializes the contract with the name "Wrapped StkGho" and symbol "WStkGho"
     constructor() ERC20("Wrapped StkGho", "WStkGho") {
         nameHash = keccak256(bytes("Wrapped StkGHO"));
         versionHash = keccak256(bytes("1"));
@@ -91,6 +96,7 @@ contract StkGhoERC4626Wrapper is
         );
     }
 
+    /// @inheritdoc IERC165
     function supportsInterface(
         bytes4 interfaceId
     ) external pure override returns (bool) {
@@ -278,6 +284,7 @@ contract StkGhoERC4626Wrapper is
         success = true;
     }
 
+    /// @dev Invalidate nonce
     function invalidateNonce(bytes32 nonce) external {
         authorizations[msg.sender][nonce] = true;
     }
@@ -322,6 +329,9 @@ contract StkGhoERC4626Wrapper is
         return 0;
     }
 
+    /// @notice Get the total rewards for a given owner
+    /// @param owner The address of the owner to check rewards for
+    /// @return The total amount of rewards available for the owner
     function getRewards(address owner) external view returns (uint256) {
         uint256 assets = _shareToAsset(balanceOf(owner));
         (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
@@ -330,6 +340,9 @@ contract StkGhoERC4626Wrapper is
             _getRewards(assets, newIndex, userIndex[owner]);
     }
 
+    /// @notice Claim rewards for a given owner
+    /// @param owner The address of the owner claiming rewards
+    /// @return rewards The amount of rewards claimed
     function claimRewards(
         address owner
     ) external withClaim returns (uint256 rewards) {
@@ -339,6 +352,9 @@ contract StkGhoERC4626Wrapper is
         IERC20(AAVE).transfer(owner, rewards);
     }
 
+    /// @notice Convert assets to shares
+    /// @param assets The amount of assets to convert
+    /// @return shares The equivalent amount of shares
     function _assetToShare(
         uint256 assets
     ) internal view returns (uint256 shares) {
@@ -350,6 +366,9 @@ contract StkGhoERC4626Wrapper is
         }
     }
 
+    /// @notice Convert shares to assets
+    /// @param shares The amount of shares to convert
+    /// @return assets The equivalent amount of assets
     function _shareToAsset(
         uint256 shares
     ) internal view returns (uint256 assets) {
@@ -361,24 +380,10 @@ contract StkGhoERC4626Wrapper is
         }
     }
 
+    /// @notice Internal function to claim rewards
+    /// @param rewards The amount of rewards to claim
     function _claimRewards(uint256 rewards) internal {
         IStakeToken(STK_GHO).claimRewards(address(this), rewards);
-    }
-
-    function _rewardToUnderlyingExactInput(
-        uint256 rewards
-    ) internal view returns (uint256 underlying) {
-        uint256 usdcAmount = QUOTER.quoteExactInputSingle(
-            IUniswapV3StaticQuoter.QuoteExactInputSingleParams({
-                tokenIn: AAVE,
-                tokenOut: USDC,
-                amountIn: rewards,
-                fee: AAVE_USDC_UNIV3_FEE,
-                sqrtPriceLimitX96: 0
-            })
-        );
-
-        (, underlying, , ) = USDC_GSM.getGhoAmountForSellAsset(usdcAmount);
     }
 
     /**
@@ -398,6 +403,9 @@ contract StkGhoERC4626Wrapper is
             (10 ** uint256(PRECISION));
     }
 
+    /// @notice Updates the user's index for reward calculation
+    /// @dev This function is called internally to update the user's reward index and calculate new rewards
+    /// @param receiver The address of the user whose index is being updated
     function _updateUserIndex(address receiver) internal {
         (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
         uint256 userBalance = _shareToAsset(balanceOf(receiver));
@@ -412,6 +420,10 @@ contract StkGhoERC4626Wrapper is
         }
     }
 
+    /// @notice Internal function to deposit assets and mint shares
+    /// @param assets The amount of assets to deposit
+    /// @param shares The amount of shares to mint
+    /// @param receiver The address that will receive the minted shares
     function _deposit(
         uint256 assets,
         uint256 shares,
@@ -427,6 +439,10 @@ contract StkGhoERC4626Wrapper is
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
+    /// @notice Internal function to redeem shares for assets
+    /// @param assets The amount of assets to withdraw
+    /// @param shares The amount of shares to burn
+    /// @param receiver The address that will receive the assets
     function _redeem(
         uint256 assets,
         uint256 shares,
@@ -445,6 +461,9 @@ contract StkGhoERC4626Wrapper is
         IERC20(GHO).transfer(receiver, assets);
     }
 
+    /// @notice Internal function to check if redeem is possible
+    /// @return redeemable True if redeem is currently possible
+    /// @return triggerenable True if cooldown can be triggered
     function _checkRedeemable()
         internal
         view
@@ -463,6 +482,11 @@ contract StkGhoERC4626Wrapper is
             timestamp + cooldownSeconds <= block.timestamp;
     }
 
+    /// @notice Internal function to update user balances and indices
+    /// @dev This function is called on every transfer to update reward calculations
+    /// @param from The address tokens are transferred from
+    /// @param to The address tokens are transferred to
+    /// @param value The amount of tokens transferred
     function _update(
         address from,
         address to,
