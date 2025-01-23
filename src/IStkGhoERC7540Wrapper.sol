@@ -1,16 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IStakeToken} from "./interfaces/IStakeToken.sol";
-import {IUniswapV3StaticQuoter} from "./interfaces/IUniswapV3StaticQuoter.sol";
-import {ISwapRouter} from "./interfaces/ISwapRouter.sol";
-import {IGsm} from "./interfaces/IGsm.sol";
-import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
-
-import {EIP712Lib} from "./libraries/EIP712Lib.sol";
-import {SignatureLib} from "./libraries/SignatureLib.sol";
+import {IERC7540Redeem, IERC7575, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
 
 /// @title IStkGhoERC7540Wrapper
 /// @notice A wrapper contract for staked GHO tokens implementing ERC7540 and additional interfaces
@@ -43,4 +34,7 @@ interface IStkGhoERC7540Wrapper is
     /// @param owner The address of the owner claiming rewards
     /// @return rewards The amount of rewards claimed
     function claimRewards(address owner) external returns (uint256 rewards);
+
+    /// @notice Harvest rewards
+    function harvest() external;
 }

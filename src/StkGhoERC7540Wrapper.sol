@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IStakeToken} from "./interfaces/IStakeToken.sol";
-import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7575, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
+import {IERC7540Redeem, IERC7575, IERC7540Operator, IERC7540CancelRedeem, IAuthorizeOperator} from "./interfaces/IERC7540.sol";
 import {IStkGhoERC7540Wrapper} from "./IStkGhoERC7540Wrapper.sol";
 
 import {EIP712Lib} from "./libraries/EIP712Lib.sol";
@@ -43,12 +43,7 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
 
     /// @dev claim rewards
     modifier withClaim() {
-        uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
-            address(this)
-        );
-        if (rewards > 0) {
-            _claimRewards(rewards);
-        }
+        _claimRewards();
         _;
     }
 
@@ -309,6 +304,11 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
     function getRewards(address owner) external view returns (uint256) {
         uint256 assets = _shareToAsset(balanceOf(owner));
         (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
+
+        console.log(assets);
+        console.log(newIndex);
+        console.log(userIndex[owner]);
+        console.log(stackedRewards[owner]);
         return
             stackedRewards[owner] +
             _getRewards(assets, newIndex, userIndex[owner]);
@@ -322,6 +322,11 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
         stackedRewards[owner] = 0;
 
         IERC20(AAVE).transfer(owner, rewards);
+    }
+
+    /// @inheritdoc IStkGhoERC7540Wrapper
+    function harvest() external {
+        _claimRewards();
     }
 
     /// @notice Convert assets to shares
@@ -353,9 +358,13 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
     }
 
     /// @notice Internal function to claim rewards
-    /// @param rewards The amount of rewards to claim
-    function _claimRewards(uint256 rewards) internal {
-        IStakeToken(STK_GHO).claimRewards(address(this), rewards);
+    function _claimRewards() internal {
+        uint256 rewards = IStakeToken(STK_GHO).getTotalRewardsBalance(
+            address(this)
+        );
+        if (rewards > 0) {
+            IStakeToken(STK_GHO).claimRewards(address(this), rewards);
+        }
     }
 
     /**
@@ -387,9 +396,10 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
                 newIndex,
                 userIndex[receiver]
             );
-            userIndex[receiver] = newIndex;
             stackedRewards[receiver] += userRewards;
         }
+
+        userIndex[receiver] = newIndex;
     }
 
     /// @notice Internal function to deposit assets and mint shares

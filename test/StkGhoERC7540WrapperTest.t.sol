@@ -2,7 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {StkGhoERC7540Wrapper, IStkGhoERC7540Wrapper, IERC20, IStakeToken} from "src/StkGhoERC7540Wrapper.sol";
+import {StkGhoERC7540Wrapper, IStkGhoERC7540Wrapper, IERC20} from "src/StkGhoERC7540Wrapper.sol";
+import {IStakeToken, IAaveDistributionManager, DistributionTypes} from "src/interfaces/IStakeToken.sol";
 
 contract StkGhoERC7540WrapperTest is Test {
     event Deposit(
@@ -220,5 +221,46 @@ contract WithdrawAndRedeemTest is StkGhoERC7540WrapperTest {
         );
         assertEq(pendingRedeemAmount, 0);
         assertEq(claimablePendingRedeemAmount, 0);
+    }
+}
+
+contract RewardTest is StkGhoERC7540WrapperTest {
+    uint256 amount = 100e18;
+
+    function setUp() public override {
+        super.setUp();
+
+        vm.startPrank(alice);
+        IERC20(gho).approve(address(stkGhoWrapper), amount);
+        stkGhoWrapper.deposit(amount, alice);
+        vm.stopPrank();
+
+        // increase timestamp to generate rewards
+        vm.warp(block.timestamp + 30 * 24 * 60 * 60);
+    }
+
+    function test_checkRewards() public {
+        // update index
+        (uint128 emissionPerSecond, , ) = IAaveDistributionManager(stkGho)
+            .assets(stkGho);
+        vm.startPrank(IAaveDistributionManager(stkGho).EMISSION_MANAGER());
+        DistributionTypes.AssetConfigInput[]
+            memory assetParams = new DistributionTypes.AssetConfigInput[](1);
+        assetParams[0] = DistributionTypes.AssetConfigInput({
+            emissionPerSecond: emissionPerSecond,
+            totalStaked: 0,
+            underlyingAsset: stkGho
+        });
+        IAaveDistributionManager(stkGho).configureAssets(assetParams);
+        vm.stopPrank();
+
+        vm.startPrank(alice);
+        uint256 rewardOfAlice = stkGhoWrapper.getRewards(alice);
+        uint256 totalRewards = IStakeToken(stkGho).getTotalRewardsBalance(
+            address(stkGhoWrapper)
+        );
+        assertEq(rewardOfAlice, totalRewards);
+
+        vm.stopPrank();
     }
 }

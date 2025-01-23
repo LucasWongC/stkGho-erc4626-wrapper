@@ -30,6 +30,8 @@ interface IAaveDistributionManager {
             uint128 lastUpdateTimestamp,
             uint256 index
         );
+
+    function EMISSION_MANAGER() external returns (address);
 }
 
 interface IStakeToken is IAaveDistributionManager {
