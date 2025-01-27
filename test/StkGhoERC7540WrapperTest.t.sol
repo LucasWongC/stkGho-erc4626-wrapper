@@ -167,8 +167,10 @@ contract WithdrawAndRedeemTest is StkGhoERC7540WrapperTest {
             0,
             alice
         );
+        uint256 ghoBalanceAfter = IERC20(gho).balanceOf(alice);
         assertEq(pendingRedeemAmount, 0);
         assertEq(claimablePendingRedeemAmount, 0);
+        assertEq(ghoBalanceAfter, ghoBalanceBefore + amount);
     }
 
     function test_redeem() public {
@@ -219,8 +221,10 @@ contract WithdrawAndRedeemTest is StkGhoERC7540WrapperTest {
             0,
             alice
         );
+        uint256 ghoBalanceAfter = IERC20(gho).balanceOf(alice);
         assertEq(pendingRedeemAmount, 0);
         assertEq(claimablePendingRedeemAmount, 0);
+        assertEq(ghoBalanceAfter, ghoBalanceBefore + amount);
     }
 }
 

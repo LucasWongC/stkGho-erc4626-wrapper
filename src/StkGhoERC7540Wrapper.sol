@@ -17,7 +17,8 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
     address public constant STK_GHO =
         0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d;
     address public constant GHO = 0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f;
-    address public constant AAVE = 0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
+    address public constant REWARD_TOKEN =
+        0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9;
 
     uint8 public constant PRECISION = 18;
 
@@ -305,10 +306,6 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
         uint256 assets = _shareToAsset(balanceOf(owner));
         (, , uint256 newIndex) = IStakeToken(STK_GHO).assets(address(STK_GHO));
 
-        console.log(assets);
-        console.log(newIndex);
-        console.log(userIndex[owner]);
-        console.log(stackedRewards[owner]);
         return
             stackedRewards[owner] +
             _getRewards(assets, newIndex, userIndex[owner]);
@@ -321,7 +318,7 @@ contract StkGhoERC7540Wrapper is IStkGhoERC7540Wrapper, ERC20 {
         rewards = stackedRewards[owner];
         stackedRewards[owner] = 0;
 
-        IERC20(AAVE).transfer(owner, rewards);
+        IERC20(REWARD_TOKEN).transfer(owner, rewards);
     }
 
     /// @inheritdoc IStkGhoERC7540Wrapper
